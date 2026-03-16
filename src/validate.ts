@@ -1,5 +1,5 @@
-import { type Config, type PiNode } from "./config";
-import { $quiet, PibootError } from "./shell";
+import { type Config, type PiNode } from "./config.ts";
+import { $quiet, PibootError } from "./shell.ts";
 
 export function validateSerial(serial: string): void {
   if (!/^[0-9a-fA-F]{8}$/.test(serial)) {

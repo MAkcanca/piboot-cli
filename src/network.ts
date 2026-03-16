@@ -1,6 +1,6 @@
 import { writeFileSync, readdirSync, chmodSync, mkdirSync } from "node:fs";
-import { type Config } from "./config";
-import { $, $try, $quiet, log, sleep, PibootError } from "./shell";
+import { type Config } from "./config.ts";
+import { $, $try, $quiet, log, sleep, PibootError } from "./shell.ts";
 
 function hasNetplan(): boolean {
   try {

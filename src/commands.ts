@@ -1,9 +1,9 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, basename } from "node:path";
-import { type Config, type PiNode, saveConfig, tftpDir, nfsDir } from "./config";
-import { $, $quiet, $try, log, sleep } from "./shell";
-import { configureNetwork } from "./network";
+import { type Config, type PiNode, saveConfig, tftpDir, nfsDir } from "./config.ts";
+import { $, $quiet, $try, log, sleep } from "./shell.ts";
+import { configureNetwork } from "./network.ts";
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env -S deno run --allow-all
-import { loadConfig, type PiNode } from "./config";
-import { log, requireRoot, PibootError } from "./shell";
-import { init, addNode, resetNode, removeNode, listNodes, status, logs, doctor, sshNode } from "./commands";
-import { validateNode, validateInterfaces } from "./validate";
+import { loadConfig, type PiNode } from "./config.ts";
+import { log, requireRoot, PibootError } from "./shell.ts";
+import { init, addNode, resetNode, removeNode, listNodes, status, logs, doctor, sshNode } from "./commands.ts";
+import { validateNode, validateInterfaces } from "./validate.ts";
 
 const HELP = `
 \x1b[1mpiboot\x1b[0m — Raspberry Pi netboot cluster manager
