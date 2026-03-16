@@ -529,6 +529,23 @@ export async function removeNode(config: Config, hostname: string): Promise<void
   const serial = node?.serial ?? findSerialByHostname(config, hostname);
   const targetNfs = nfsDir(config, hostname);
 
+  // Reboot the Pi so it drops into the bootloader waiting for TFTP
+  if (node) {
+    log.step(1, "Rebooting node");
+    const sshAlive = await $try(
+      `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes pi@${node.ip} "echo OK" 2>/dev/null`
+    );
+    if (sshAlive.trim() === "OK") {
+      await $try(
+        `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes pi@${node.ip} "sudo reboot" 2>/dev/null`
+      );
+      log.info(`Reboot signal sent to ${node.ip} — Pi will wait in bootloader for re-provisioning`);
+      await sleep(3000);
+    } else {
+      log.warn(`Could not SSH into ${node.ip} — node may be offline already`);
+    }
+  }
+
   // Remove NFS root
   if (existsSync(targetNfs)) {
     rmSync(targetNfs, { recursive: true, force: true });
