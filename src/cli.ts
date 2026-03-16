@@ -1,7 +1,7 @@
 #!/usr/bin/env -S deno run --allow-all
 import { loadConfig, type PiNode } from "./config";
 import { log, requireRoot, PibootError } from "./shell";
-import { init, addNode, resetNode, removeNode, listNodes, status, logs } from "./commands";
+import { init, addNode, resetNode, removeNode, listNodes, status, logs, doctor } from "./commands";
 import { validateNode, validateInterfaces } from "./validate";
 
 const HELP = `
@@ -153,6 +153,12 @@ try {
 
   case "logs": {
     await logs(flags.follow === "true");
+    break;
+  }
+
+  case "doctor": {
+    requireRoot();
+    await doctor(loadConfig());
     break;
   }
 

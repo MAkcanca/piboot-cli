@@ -488,3 +488,156 @@ export async function logs(follow: boolean): Promise<void> {
     await $(`tail -50 /var/log/dnsmasq.log`);
   }
 }
+
+export async function doctor(config: Config): Promise<void> {
+  log.banner("PIBOOT DOCTOR");
+
+  let issues = 0;
+
+  function pass(msg: string): void {
+    console.log(`  \x1b[32m✓\x1b[0m  ${msg}`);
+  }
+  function fail(msg: string, fix?: string): void {
+    issues++;
+    console.log(`  \x1b[31m✗\x1b[0m  ${msg}`);
+    if (fix) console.log(`      → ${fix}`);
+  }
+
+  // LAN interface IP
+  const ipOut = await $try(`ip addr show ${config.lan_if} 2>/dev/null`);
+  if (ipOut.includes(`inet ${config.lan_ip}/`)) {
+    pass(`LAN interface ${config.lan_if} has ${config.lan_ip}`);
+  } else {
+    fail(
+      `LAN interface ${config.lan_if} missing IP ${config.lan_ip}`,
+      `Run: sudo ip addr add ${config.lan_ip}/24 dev ${config.lan_if}`
+    );
+  }
+
+  // dnsmasq
+  const dnsmasqActive = (await $try("systemctl is-active dnsmasq")).trim();
+  if (dnsmasqActive === "active") {
+    pass("dnsmasq: active");
+  } else {
+    fail("dnsmasq: " + dnsmasqActive, "Run: sudo systemctl restart dnsmasq");
+  }
+
+  const dnsmasqTest = await $try("dnsmasq --test 2>&1");
+  if (dnsmasqTest.includes("syntax check is OK")) {
+    pass("dnsmasq config: valid");
+  } else {
+    fail("dnsmasq config: invalid", "Check: dnsmasq --test");
+  }
+
+  // NFS
+  const nfsActive = (await $try("systemctl is-active nfs-kernel-server")).trim();
+  if (nfsActive === "active") {
+    pass("nfs-kernel-server: active");
+  } else {
+    fail("nfs-kernel-server: " + nfsActive, "Run: sudo systemctl restart nfs-kernel-server");
+  }
+
+  // IP forwarding
+  const fwd = (await $try("sysctl -n net.ipv4.ip_forward")).trim();
+  if (fwd === "1") {
+    pass("IP forwarding: enabled");
+  } else {
+    fail("IP forwarding: disabled", "Run: sudo sysctl -w net.ipv4.ip_forward=1");
+  }
+
+  // NAT rule
+  const natCheck = await $try(
+    `iptables -t nat -C POSTROUTING -s ${config.lan_subnet}.0/24 -o ${config.wan_if} -j MASQUERADE 2>/dev/null && echo EXISTS`
+  );
+  if (natCheck.trim() === "EXISTS") {
+    pass(`NAT masquerade: ${config.lan_subnet}.0/24 → ${config.wan_if}`);
+  } else {
+    fail(
+      "NAT masquerade rule missing",
+      `Run: sudo iptables -t nat -A POSTROUTING -s ${config.lan_subnet}.0/24 -o ${config.wan_if} -j MASQUERADE`
+    );
+  }
+
+  // Per-node checks
+  const exportsList = await $try("cat /etc/exports 2>/dev/null");
+
+  for (const node of config.nodes) {
+    const tftp = tftpDir(config, node.serial);
+    const nfs = nfsDir(config, node.hostname);
+
+    if (existsSync(join(tftp, "cmdline.txt"))) {
+      pass(`Node ${node.hostname}: TFTP dir OK (${node.serial})`);
+    } else {
+      fail(
+        `Node ${node.hostname}: TFTP dir missing or no cmdline.txt`,
+        `Check: ls ${tftp}/`
+      );
+    }
+
+    if (existsSync(join(tftp, "kernel_2712.img")) || existsSync(join(tftp, "kernel8.img"))) {
+      pass(`Node ${node.hostname}: kernel image present`);
+    } else {
+      fail(
+        `Node ${node.hostname}: no kernel image in TFTP dir`,
+        `May need: piboot reset ${node.hostname}`
+      );
+    }
+
+    if (existsSync(join(nfs, "etc")) && existsSync(join(nfs, "bin"))) {
+      pass(`Node ${node.hostname}: NFS root OK`);
+    } else {
+      fail(
+        `Node ${node.hostname}: NFS root missing or incomplete`,
+        `Run: piboot reset ${node.hostname}`
+      );
+    }
+
+    if (exportsList.includes(nfs)) {
+      pass(`Node ${node.hostname}: NFS exports present`);
+    } else {
+      fail(
+        `Node ${node.hostname}: missing from /etc/exports`,
+        `Run: piboot init (re-run to regenerate)`
+      );
+    }
+  }
+
+  // Orphan detection
+  if (existsSync(config.tftp_root)) {
+    const tftpDirs = readdirSync(config.tftp_root, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+    const knownSerials = new Set(config.nodes.map((n) => n.serial));
+    for (const dir of tftpDirs) {
+      if (!knownSerials.has(dir)) {
+        fail(
+          `Orphaned TFTP dir: ${join(config.tftp_root, dir)} (no matching node in config)`,
+          "If unused, manually remove it"
+        );
+      }
+    }
+  }
+
+  if (existsSync(config.nfs_root)) {
+    const nfsDirs = readdirSync(config.nfs_root, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+    const knownHostnames = new Set(config.nodes.map((n) => n.hostname));
+    for (const dir of nfsDirs) {
+      if (!knownHostnames.has(dir)) {
+        fail(
+          `Orphaned NFS dir: ${join(config.nfs_root, dir)} (no matching node in config)`,
+          `If unused: piboot remove ${dir}`
+        );
+      }
+    }
+  }
+
+  // Summary
+  console.log();
+  if (issues === 0) {
+    log.info("All checks passed.");
+  } else {
+    log.warn(`${issues} issue${issues > 1 ? "s" : ""} found.`);
+  }
+}
