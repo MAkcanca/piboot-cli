@@ -1,6 +1,6 @@
 #!/usr/bin/env -S deno run --allow-all
 import { loadConfig, type PiNode } from "./config.ts";
-import { log, requireRoot, PibootError } from "./shell.ts";
+import { log, requireRoot, PibootError, registerCleanupHandler } from "./shell.ts";
 import { init, addNode, resetNode, removeNode, listNodes, status, logs, doctor, sshNode, update } from "./commands.ts";
 import { validateNode, validateInterfaces } from "./validate.ts";
 
@@ -90,6 +90,7 @@ if (!command || command === "help" || command === "--help" || command === "-h") 
 
 const { flags, extra } = parseFlags(rest);
 const verbose = flags.verbose === "true";
+registerCleanupHandler();
 delete flags.verbose;
 
 try {

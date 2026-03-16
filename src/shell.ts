@@ -94,3 +94,35 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// ── Cleanup on interrupt ────────────────────────────────────────────────────
+
+const cleanupHandlers: (() => Promise<void> | void)[] = [];
+
+export function onCleanup(fn: () => Promise<void> | void): void {
+  cleanupHandlers.push(fn);
+}
+
+export function removeCleanup(fn: () => Promise<void> | void): void {
+  const idx = cleanupHandlers.indexOf(fn);
+  if (idx !== -1) cleanupHandlers.splice(idx, 1);
+}
+
+let cleanupRegistered = false;
+export function registerCleanupHandler(): void {
+  if (cleanupRegistered) return;
+  cleanupRegistered = true;
+
+  const handler = async () => {
+    if (cleanupHandlers.length > 0) {
+      console.error("\n\x1b[1;33m[WARN]\x1b[0m  Interrupted — cleaning up...");
+      for (const fn of [...cleanupHandlers].reverse()) {
+        try { await fn(); } catch { /* best effort */ }
+      }
+    }
+    process.exit(130);
+  };
+
+  process.on("SIGINT", handler);
+  process.on("SIGTERM", handler);
+}
+

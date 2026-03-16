@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync
 import { execFileSync } from "node:child_process";
 import { join, basename } from "node:path";
 import { type Config, type PiNode, saveConfig, tftpDir, nfsDir } from "./config.ts";
-import { $, $quiet, $try, log, sleep } from "./shell.ts";
+import { $, $quiet, $try, log, sleep, onCleanup, removeCleanup } from "./shell.ts";
 import { configureNetwork } from "./network.ts";
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
@@ -217,6 +217,14 @@ async function extractImage(config: Config, targetNfs: string, targetTftp: strin
   const bootPart = `/dev/mapper/${loopBase}p1`;
   const rootPart = `/dev/mapper/${loopBase}p2`;
 
+  const cleanup = async () => {
+    await $try('umount /mnt/rpi_boot 2>/dev/null');
+    await $try('umount /mnt/rpi_root 2>/dev/null');
+    await $try(`kpartx -d "${loopDev}"`);
+    await $try(`losetup -d "${loopDev}"`);
+  };
+  onCleanup(cleanup);
+
   try {
     mkdirSync("/mnt/rpi_boot", { recursive: true });
     mkdirSync("/mnt/rpi_root", { recursive: true });
@@ -234,10 +242,8 @@ async function extractImage(config: Config, targetNfs: string, targetTftp: strin
     mkdirSync(targetTftp, { recursive: true });
     await $(`rsync -a /mnt/rpi_boot/ "${targetTftp}/"`);
   } finally {
-    await $try('umount /mnt/rpi_boot 2>/dev/null');
-    await $try('umount /mnt/rpi_root 2>/dev/null');
-    await $try(`kpartx -d "${loopDev}"`);
-    await $try(`losetup -d "${loopDev}"`);
+    await cleanup();
+    removeCleanup(cleanup);
   }
 }
 
@@ -285,6 +291,7 @@ export async function init(config: Config, firstNode: PiNode, sshKeyPath?: strin
 
   mkdirSync(config.tftp_root, { recursive: true });
   config.nodes.push(firstNode);
+  saveConfig(config);
   writeDnsmasqConf(config);
   await $(`systemctl enable dnsmasq`);
   log.info(`DHCP ${config.dhcp_range_start}–${config.dhcp_range_end}, TFTP ${config.tftp_root}`);
