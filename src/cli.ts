@@ -2,6 +2,7 @@
 import { loadConfig, type PiNode } from "./config";
 import { log, requireRoot, PibootError } from "./shell";
 import { init, addNode, resetNode, removeNode, listNodes, status, logs } from "./commands";
+import { validateNode, validateInterfaces } from "./validate";
 
 const HELP = `
 \x1b[1mpiboot\x1b[0m — Raspberry Pi netboot cluster manager
@@ -102,6 +103,8 @@ try {
       ip: requireFlag(flags, "ip", "static IP for this Pi"),
     };
 
+    await validateNode(node, config);
+    await validateInterfaces(config);
     await init(config, node);
     break;
   }
@@ -116,9 +119,7 @@ try {
       ip: requireFlag(flags, "ip", "static IP for this Pi"),
     };
 
-    if (config.nodes.find((n) => n.hostname === node.hostname)) {
-      log.fail(`Node "${node.hostname}" already exists. Remove it first or pick a different hostname.`);
-    }
+    await validateNode(node, config);
 
     await addNode(config, node);
     break;
