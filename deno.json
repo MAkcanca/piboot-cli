@@ -1,0 +1,9 @@
+{
+  "tasks": {
+    "start": "deno run --allow-all src/cli.ts",
+    "compile": "deno compile --allow-all -o piboot src/cli.ts"
+  },
+  "compilerOptions": {
+    "strict": true
+  }
+}

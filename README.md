@@ -28,7 +28,7 @@ Raspberry Pi netboot cluster manager. Sets up a Debian server as a PXE/TFTP/NFS 
 
 - Debian 13 (Trixie) — fresh install
 - Two network interfaces (`ens18` WAN, `ens19` LAN)
-- Deno runtime (`curl -fsSL https://deno.land/install.sh | sh`)
+- [Deno](https://deno.land) runtime
 
 ## Install
 
@@ -42,12 +42,19 @@ cd /opt/piboot
 # Create wrapper script
 cat > /usr/local/bin/piboot << 'EOF'
 #!/bin/sh
-exec /root/.deno/bin/deno run --allow-all /opt/piboot/src/cli.ts "$@"
+exec deno run --allow-all /opt/piboot/src/cli.ts "$@"
 EOF
 chmod +x /usr/local/bin/piboot
 
 # Run
 sudo piboot <command>
+```
+
+Optionally compile to a single binary:
+
+```bash
+deno compile --allow-all -o piboot src/cli.ts
+cp piboot /usr/local/bin/piboot
 ```
 
 ## Usage
