@@ -131,9 +131,15 @@ async function patchNfsRoot(config: Config, node: PiNode, sshKey?: string | null
     hosts.replace(/127\.0\.1\.1.*/g, `127.0.1.1\t${node.hostname}`)
   );
 
-  // SSH
+  // SSH — enable and pre-generate host keys so sshd works immediately on boot
   writeFileSync(join(nfs, "boot/firmware/ssh"), "");
   writeFileSync(join(tftp, "ssh"), "");
+  for (const type of ["rsa", "ecdsa", "ed25519"]) {
+    const keyPath = join(nfs, `etc/ssh/ssh_host_${type}_key`);
+    if (!existsSync(keyPath)) {
+      await $quiet(`ssh-keygen -t ${type} -f "${keyPath}" -N "" -q`);
+    }
+  }
 
   // Default user: pi/raspberry
   const hash = await $quiet("echo 'raspberry' | openssl passwd -6 -stdin");
@@ -449,24 +455,40 @@ export async function resetNode(config: Config, hostname: string, sshKeyPath?: s
     log.fail(`Base image not found: ${config.image_raw} — run 'piboot init' first`);
   }
 
+  // Reboot the Pi before wiping — it's NFS-booting so cmdline.txt has
+  // rootwait, meaning the kernel will retry the NFS mount until we finish
+  log.step(1, "Rebooting node");
+  const rebootResult = await $try(
+    `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes pi@${node!.ip} "sudo reboot" 2>/dev/null`
+  );
+  if (rebootResult !== "") {
+    log.info(`Reboot signal sent to ${node!.ip} — Pi will boot into fresh rootfs automatically`);
+  } else {
+    log.warn(`Could not SSH into ${node!.ip} — you may need to power cycle after reset`);
+  }
+
   // Wipe
-  log.step(1, "Wiping rootfs");
+  log.step(2, "Wiping rootfs");
   rmSync(targetNfs, { recursive: true, force: true });
 
   // Re-extract
-  log.step(2, "Re-extracting from image");
+  log.step(3, "Re-extracting from image");
   await extractImage(config, targetNfs, targetTftp);
 
   // Cmdline
-  log.step(3, "Writing cmdline.txt");
+  log.step(4, "Writing cmdline.txt");
   writeFileSync(join(targetTftp, "cmdline.txt"), cmdline(config, targetNfs) + "\n");
 
   // Patch
-  log.step(4, "Patching NFS root");
+  log.step(5, "Patching NFS root");
   await patchNfsRoot(config, node!, sshKey);
 
   log.banner(`NODE ${hostname} RESET TO FACTORY`);
-  log.info(`Power it on.`);
+  if (rebootResult !== "") {
+    log.info("Pi is rebooting — it will come up with the fresh rootfs automatically.");
+  } else {
+    log.info("Power cycle the Pi to boot into the fresh rootfs.");
+  }
 }
 
 export async function removeNode(config: Config, hostname: string): Promise<void> {
