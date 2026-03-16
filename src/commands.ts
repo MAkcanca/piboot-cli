@@ -20,6 +20,62 @@ tmpfs           /var/tmp tmpfs  defaults,nosuid   0 0
 `;
 }
 
+function writeDnsmasqConf(config: Config): void {
+  const nodeLeases = config.nodes
+    .map((n) => `dhcp-host=${n.mac},${n.ip},${n.hostname},infinite`)
+    .join("\n");
+
+  writeFileSync("/etc/dnsmasq.conf",
+`# ── Interface ────────────────────────────────
+interface=${config.lan_if}
+bind-interfaces
+except-interface=lo
+
+# ── DNS (forward upstream) ───────────────────
+server=1.1.1.1
+server=8.8.8.8
+
+# ── DHCP ─────────────────────────────────────
+dhcp-range=${config.dhcp_range_start},${config.dhcp_range_end},${config.lan_mask},${config.dhcp_lease}
+dhcp-option=option:router,${config.lan_ip}
+dhcp-option=option:dns-server,${config.lan_ip}
+
+# ── Static leases ────────────────────────────
+${nodeLeases}
+
+# ── TFTP / PXE (Raspberry Pi netboot) ───────
+enable-tftp
+tftp-root=${config.tftp_root}
+pxe-service=0,"Raspberry Pi Boot"
+
+# ── Logging ──────────────────────────────────
+log-dhcp
+log-facility=/var/log/dnsmasq.log
+`);
+}
+
+function writeNfsExports(config: Config): void {
+  const entries = config.nodes.flatMap((n) => {
+    const nfs = nfsDir(config, n.hostname);
+    const tftp = tftpDir(config, n.serial);
+    return [
+      `${nfs}   ${config.lan_subnet}.0/24(rw,sync,no_subtree_check,no_root_squash)`,
+      `${tftp}  ${config.lan_subnet}.0/24(rw,sync,no_subtree_check,no_root_squash)`,
+    ];
+  });
+
+  writeFileSync("/etc/exports",
+`# Netboot exports — managed by piboot
+${entries.join("\n")}
+`);
+}
+
+async function ensureIptablesRule(rule: string): Promise<void> {
+  const result = await $try(`iptables -C ${rule} 2>/dev/null && echo EXISTS`);
+  if (result.trim() === "EXISTS") return;
+  await $(`iptables -A ${rule}`);
+}
+
 async function patchNfsRoot(config: Config, node: PiNode): Promise<void> {
   const nfs = nfsDir(config, node.hostname);
   const tftp = tftpDir(config, node.serial);
@@ -165,10 +221,8 @@ export async function init(config: Config, firstNode: PiNode): Promise<void> {
 
   await $(`iptables -t nat -F POSTROUTING`);
   await $(`iptables -t nat -A POSTROUTING -s ${config.lan_subnet}.0/24 -o ${config.wan_if} -j MASQUERADE`);
-  await $try(`iptables -C FORWARD -i ${config.lan_if} -o ${config.wan_if} -j ACCEPT`);
-  await $try(`iptables -C FORWARD -i ${config.wan_if} -o ${config.lan_if} -m state --state RELATED,ESTABLISHED -j ACCEPT`);
-  await $try(`iptables -A FORWARD -i ${config.lan_if} -o ${config.wan_if} -j ACCEPT`);
-  await $try(`iptables -A FORWARD -i ${config.wan_if} -o ${config.lan_if} -m state --state RELATED,ESTABLISHED -j ACCEPT`);
+  await ensureIptablesRule(`FORWARD -i ${config.lan_if} -o ${config.wan_if} -j ACCEPT`);
+  await ensureIptablesRule(`FORWARD -i ${config.wan_if} -o ${config.lan_if} -m state --state RELATED,ESTABLISHED -j ACCEPT`);
   await $try(`netfilter-persistent save`);
   log.info(`NAT: ${config.lan_subnet}.0/24 → ${config.wan_if}`);
 
@@ -185,35 +239,8 @@ export async function init(config: Config, firstNode: PiNode): Promise<void> {
   }
 
   mkdirSync(config.tftp_root, { recursive: true });
-
-  writeFileSync("/etc/dnsmasq.conf",
-`# ── Interface ────────────────────────────────
-interface=${config.lan_if}
-bind-interfaces
-except-interface=lo
-
-# ── DNS (forward upstream) ───────────────────
-server=1.1.1.1
-server=8.8.8.8
-
-# ── DHCP ─────────────────────────────────────
-dhcp-range=${config.dhcp_range_start},${config.dhcp_range_end},${config.lan_mask},${config.dhcp_lease}
-dhcp-option=option:router,${config.lan_ip}
-dhcp-option=option:dns-server,${config.lan_ip}
-
-# Static lease — first node
-dhcp-host=${firstNode.mac},${firstNode.ip},${firstNode.hostname},infinite
-
-# ── TFTP / PXE (Raspberry Pi netboot) ───────
-enable-tftp
-tftp-root=${config.tftp_root}
-pxe-service=0,"Raspberry Pi Boot"
-
-# ── Logging ──────────────────────────────────
-log-dhcp
-log-facility=/var/log/dnsmasq.log
-`);
-
+  config.nodes.push(firstNode);
+  writeDnsmasqConf(config);
   await $(`systemctl enable dnsmasq`);
   log.info(`DHCP ${config.dhcp_range_start}–${config.dhcp_range_end}, TFTP ${config.tftp_root}`);
 
@@ -233,7 +260,11 @@ log-facility=/var/log/dnsmasq.log
   log.step(6, "Extracting boot + rootfs for first node");
   const piTftp = tftpDir(config, firstNode.serial);
   const piNfs = nfsDir(config, firstNode.hostname);
-  await extractImage(config, piNfs, piTftp);
+  if (existsSync(piNfs)) {
+    log.warn(`NFS root already exists: ${piNfs} — skipping extraction. Use 'piboot reset ${firstNode.hostname}' to re-extract.`);
+  } else {
+    await extractImage(config, piNfs, piTftp);
+  }
 
   // ── 7. Patch cmdline ──
   log.step(7, "Writing cmdline.txt");
@@ -253,11 +284,7 @@ log-facility=/var/log/dnsmasq.log
   mkdirSync("/etc/nfs.conf.d", { recursive: true });
   writeFileSync("/etc/nfs.conf.d/netboot.conf", "[nfsd]\nvers3=y\nvers4=y\n");
 
-  writeFileSync("/etc/exports",
-`# Netboot exports — managed by piboot
-${piNfs}   ${config.lan_subnet}.0/24(rw,sync,no_subtree_check,no_root_squash)
-${piTftp}  ${config.lan_subnet}.0/24(rw,sync,no_subtree_check,no_root_squash)
-`);
+  writeNfsExports(config);
 
   await $(`exportfs -ra`);
   await $(`systemctl enable --now nfs-kernel-server`);
@@ -269,7 +296,6 @@ ${piTftp}  ${config.lan_subnet}.0/24(rw,sync,no_subtree_check,no_root_squash)
   await $(`systemctl restart nfs-kernel-server`);
 
   // ── Save config ──
-  config.nodes.push(firstNode);
   saveConfig(config);
 
   // ── Done ──
@@ -309,28 +335,15 @@ export async function addNode(config: Config, node: PiNode): Promise<void> {
   log.step(3, "Patching NFS root");
   await patchNfsRoot(config, node);
 
-  // DHCP reservation
-  log.step(4, "Adding DHCP reservation");
-  const dnsmasq = readFileSync("/etc/dnsmasq.conf", "utf-8");
-  writeFileSync(
-    "/etc/dnsmasq.conf",
-    dnsmasq.trimEnd() + `\ndhcp-host=${node.mac},${node.ip},${node.hostname},infinite\n`
-  );
-
-  // NFS exports
-  log.step(5, "Adding NFS exports");
-  const exports = readFileSync("/etc/exports", "utf-8");
-  writeFileSync(
-    "/etc/exports",
-    exports.trimEnd() +
-    `\n${targetNfs}   ${config.lan_subnet}.0/24(rw,sync,no_subtree_check,no_root_squash)` +
-    `\n${targetTftp}  ${config.lan_subnet}.0/24(rw,sync,no_subtree_check,no_root_squash)\n`
-  );
+  // DHCP + NFS — regenerate from config
+  log.step(4, "Updating dnsmasq and NFS exports");
+  config.nodes.push(node);
+  writeDnsmasqConf(config);
+  writeNfsExports(config);
   await $(`exportfs -ra`);
   await $(`systemctl restart dnsmasq`);
 
   // Save
-  config.nodes.push(node);
   saveConfig(config);
 
   log.banner(`NODE ${node.hostname} READY`);
@@ -406,35 +419,14 @@ export async function removeNode(config: Config, hostname: string): Promise<void
     log.warn(`Could not determine serial for ${hostname} — TFTP dir may need manual cleanup`);
   }
 
-  // Clean dnsmasq.conf
-  if (existsSync("/etc/dnsmasq.conf")) {
-    const dnsmasq = readFileSync("/etc/dnsmasq.conf", "utf-8");
-    const filtered = dnsmasq
-      .split("\n")
-      .filter((line) => !line.includes(hostname))
-      .join("\n");
-    writeFileSync("/etc/dnsmasq.conf", filtered);
-    await $try("systemctl restart dnsmasq");
-    log.info("Removed DHCP reservation");
-  }
-
-  // Clean exports
-  if (existsSync("/etc/exports")) {
-    const exports = readFileSync("/etc/exports", "utf-8");
-    const filtered = exports
-      .split("\n")
-      .filter((line) => !line.includes(hostname) && !(serial && line.includes(serial)))
-      .join("\n");
-    writeFileSync("/etc/exports", filtered);
-    await $try("exportfs -ra");
-    log.info("Removed NFS exports");
-  }
-
-  // Remove from config
+  // Regenerate dnsmasq.conf and exports without this node
   config.nodes = config.nodes.filter((n) => n.hostname !== hostname);
+  writeDnsmasqConf(config);
+  writeNfsExports(config);
+  await $try("exportfs -ra");
+  await $try("systemctl restart dnsmasq");
   saveConfig(config);
-
-  log.info(`${hostname} fully removed.`);
+  log.info(`Removed DHCP reservation and NFS exports`);
 }
 
 export function listNodes(config: Config): void {
