@@ -45,6 +45,12 @@ export function validateIp(ip: string, config: Config): void {
       `IP "${ip}" falls within DHCP dynamic range (${config.dhcp_range_start}–${config.dhcp_range_end}). Use a static IP outside this range.`
     );
   }
+
+  if (ip === config.lan_ip) {
+    throw new PibootError(
+      `IP "${ip}" is the server's own LAN IP — pick a different address`
+    );
+  }
 }
 
 export async function validateInterface(name: string): Promise<void> {

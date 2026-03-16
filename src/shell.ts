@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 
-const RED = "\x1b[0;31m";
 const GRN = "\x1b[0;32m";
 const YEL = "\x1b[1;33m";
 const CYN = "\x1b[0;36m";
@@ -95,11 +94,3 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function withContext<T>(description: string, fn: () => Promise<T>): Promise<T> {
-  try {
-    return await fn();
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new PibootError(`${description}: ${msg}`);
-  }
-}

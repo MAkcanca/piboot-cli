@@ -614,7 +614,7 @@ export async function doctor(config: Config): Promise<void> {
     } else {
       fail(
         `Node ${node.hostname}: missing from /etc/exports`,
-        `Run: piboot init (re-run to regenerate)`
+        `Run: sudo exportfs -ra (or any piboot add/remove will regenerate)`
       );
     }
   }
