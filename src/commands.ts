@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync
 import { join, basename } from "node:path";
 import { type Config, type PiNode, saveConfig, tftpDir, nfsDir } from "./config";
 import { $, $quiet, $try, log, sleep } from "./shell";
+import { configureNetwork } from "./network";
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
@@ -154,31 +155,7 @@ export async function init(config: Config, firstNode: PiNode): Promise<void> {
 
   // ── 2. Network ──
   log.step(2, `Configuring static IP on ${config.lan_if}`);
-  mkdirSync("/etc/systemd/network", { recursive: true });
-
-  writeFileSync("/etc/systemd/network/10-wan.network",
-`[Match]
-Name=${config.wan_if}
-
-[Network]
-DHCP=yes
-`);
-
-  writeFileSync("/etc/systemd/network/20-lan.network",
-`[Match]
-Name=${config.lan_if}
-
-[Network]
-Address=${config.lan_ip}/24
-DHCPServer=false
-`);
-
-  await $(`systemctl enable --now systemd-networkd`);
-  await $try(`networkctl reload`);
-  await sleep(2000);
-  await $try(`ip addr add ${config.lan_ip}/24 dev ${config.lan_if}`);
-  await $(`ip link set ${config.lan_if} up`);
-  log.info(`${config.lan_if} → ${config.lan_ip}/24`);
+  await configureNetwork(config);
 
   // ── 3. Forwarding + NAT ──
   log.step(3, "Enabling IP forwarding and NAT");
