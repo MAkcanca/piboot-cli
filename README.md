@@ -120,6 +120,29 @@ sudo piboot status
 sudo piboot logs --follow
 ```
 
+### Diagnose issues
+
+```bash
+sudo piboot doctor
+```
+
+Checks server health: interface IP, dnsmasq, NFS, TFTP dirs, IP forwarding, NAT rules, and detects orphaned directories. Shows actionable fix suggestions for each issue.
+
+### SSH into a node
+
+```bash
+piboot ssh rpi5-01
+piboot ssh rpi5-01 -- -L 8080:localhost:80
+```
+
+### Verbose error output
+
+Add `--verbose` to any command to see full stack traces on error:
+
+```bash
+sudo piboot init --verbose --serial ...
+```
+
 ## Config
 
 After `init`, configuration is stored at `/etc/piboot/config.json`. This tracks all node definitions and server settings. The CLI reads and updates this file automatically.
@@ -181,9 +204,12 @@ Approve the route in Tailscale admin console. All Pis become directly accessible
 
 ### Node not booting
 
-1. Check dnsmasq logs: `piboot logs --follow`
-2. Verify TFTP directory exists: `ls /srv/tftp/<serial>`
-3. Verify NFS exports: `exportfs -v`
+Run `sudo piboot doctor` to diagnose. It checks all common failure points and suggests fixes.
+
+For live debugging, watch the DHCP/TFTP logs:
+```bash
+sudo piboot logs --follow
+```
 
 ### Orphaned files after failed remove
 
