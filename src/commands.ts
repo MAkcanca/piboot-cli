@@ -540,7 +540,7 @@ export async function doctor(config: Config): Promise<void> {
   }
 
   const dnsmasqTest = await $try("dnsmasq --test 2>&1");
-  if (dnsmasqTest.includes("syntax check is OK")) {
+  if (dnsmasqTest.includes("syntax check OK")) {
     pass("dnsmasq config: valid");
   } else {
     fail("dnsmasq config: invalid", "Check: dnsmasq --test");
