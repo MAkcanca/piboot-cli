@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join, basename } from "node:path";
 import { type Config, type PiNode, saveConfig, tftpDir, nfsDir } from "./config";
 import { $, $quiet, $try, log, sleep } from "./shell";
@@ -486,6 +487,22 @@ export async function logs(follow: boolean): Promise<void> {
     await $(`tail -f /var/log/dnsmasq.log`);
   } else {
     await $(`tail -50 /var/log/dnsmasq.log`);
+  }
+}
+
+export function sshNode(config: Config, hostname: string, extraArgs: string[]): void {
+  const node = config.nodes.find((n) => n.hostname === hostname);
+  if (!node) {
+    log.fail(`Node "${hostname}" not found. Run 'piboot list' to see nodes.`);
+  }
+
+  const args = ["pi@" + node!.ip, ...extraArgs];
+  log.info(`ssh ${args.join(" ")}`);
+
+  try {
+    execFileSync("ssh", args, { stdio: "inherit" });
+  } catch (err: any) {
+    process.exit(err.status ?? 1);
   }
 }
 

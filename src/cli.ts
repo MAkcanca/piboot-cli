@@ -1,7 +1,7 @@
 #!/usr/bin/env -S deno run --allow-all
 import { loadConfig, type PiNode } from "./config";
 import { log, requireRoot, PibootError } from "./shell";
-import { init, addNode, resetNode, removeNode, listNodes, status, logs, doctor } from "./commands";
+import { init, addNode, resetNode, removeNode, listNodes, status, logs, doctor, sshNode } from "./commands";
 import { validateNode, validateInterfaces } from "./validate";
 
 const HELP = `
@@ -37,12 +37,23 @@ const HELP = `
     --wan-if, --lan-if, --lan-subnet
 `;
 
-function parseFlags(args: string[]): Record<string, string> {
+interface ParsedFlags {
+  flags: Record<string, string>;
+  extra: string[];
+}
+
+function parseFlags(args: string[]): ParsedFlags {
   const flags: Record<string, string> = {};
   const positional: string[] = [];
+  const extra: string[] = [];
+  let seenDash = false;
 
   for (let i = 0; i < args.length; i++) {
-    if (args[i].startsWith("--")) {
+    if (seenDash) {
+      extra.push(args[i]);
+    } else if (args[i] === "--") {
+      seenDash = true;
+    } else if (args[i].startsWith("--")) {
       const key = args[i].replace(/^--/, "").replace(/-/g, "_");
       const val = args[i + 1] && !args[i + 1].startsWith("--") ? args[++i] : "true";
       flags[key] = val;
@@ -51,12 +62,11 @@ function parseFlags(args: string[]): Record<string, string> {
     }
   }
 
-  // First positional goes into _target (for reset/remove)
   if (positional.length > 0) {
     flags._target = positional[0];
   }
 
-  return flags;
+  return { flags, extra };
 }
 
 function requireFlag(flags: Record<string, string>, key: string, hint: string): string {
@@ -75,7 +85,7 @@ if (!command || command === "help" || command === "--help" || command === "-h") 
   process.exit(0);
 }
 
-const flags = parseFlags(rest);
+const { flags, extra } = parseFlags(rest);
 const verbose = flags.verbose === "true";
 delete flags.verbose;
 
@@ -159,6 +169,13 @@ try {
   case "doctor": {
     requireRoot();
     await doctor(loadConfig());
+    break;
+  }
+
+  case "ssh": {
+    const hostname = flags._target;
+    if (!hostname) log.fail("Usage: piboot ssh <hostname>");
+    sshNode(loadConfig(), hostname, extra);
     break;
   }
 

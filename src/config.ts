@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 
 export interface PiNode {
@@ -56,6 +56,7 @@ export function loadConfig(): Config {
 export function saveConfig(config: Config): void {
   mkdirSync(CONFIG_DIR, { recursive: true });
   writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2) + "\n");
+  chmodSync(CONFIG_FILE, 0o644);
 }
 
 export function findNode(config: Config, hostname: string): PiNode | undefined {
