@@ -217,11 +217,25 @@ async function extractImage(config: Config, targetNfs: string, targetTftp: strin
   const bootPart = `/dev/mapper/${loopBase}p1`;
   const rootPart = `/dev/mapper/${loopBase}p2`;
 
+  let extractionComplete = false;
+
   const cleanup = async () => {
     await $try('umount /mnt/rpi_boot 2>/dev/null');
     await $try('umount /mnt/rpi_root 2>/dev/null');
     await $try(`kpartx -d "${loopDev}"`);
     await $try(`losetup -d "${loopDev}"`);
+
+    // Remove partial directories if extraction didn't finish
+    if (!extractionComplete) {
+      if (existsSync(targetNfs)) {
+        rmSync(targetNfs, { recursive: true, force: true });
+        log.warn(`Removed partial NFS root: ${targetNfs}`);
+      }
+      if (existsSync(targetTftp)) {
+        rmSync(targetTftp, { recursive: true, force: true });
+        log.warn(`Removed partial TFTP dir: ${targetTftp}`);
+      }
+    }
   };
   onCleanup(cleanup);
 
@@ -233,14 +247,16 @@ async function extractImage(config: Config, targetNfs: string, targetTftp: strin
 
     log.info("Copying rootfs (this takes a while) …");
     mkdirSync(targetNfs, { recursive: true });
-    await $(`rsync -a /mnt/rpi_root/ "${targetNfs}/"`);
+    await $(`rsync -a /mnt/rpi_root/ "${targetNfs}/"`, { silent: true });
 
     mkdirSync(join(targetNfs, "boot/firmware"), { recursive: true });
-    await $(`rsync -a /mnt/rpi_boot/ "${targetNfs}/boot/firmware/"`);
+    await $(`rsync -a /mnt/rpi_boot/ "${targetNfs}/boot/firmware/"`, { silent: true });
 
     log.info("Copying boot files …");
     mkdirSync(targetTftp, { recursive: true });
-    await $(`rsync -a /mnt/rpi_boot/ "${targetTftp}/"`);
+    await $(`rsync -a /mnt/rpi_boot/ "${targetTftp}/"`, { silent: true });
+
+    extractionComplete = true;
   } finally {
     await cleanup();
     removeCleanup(cleanup);
