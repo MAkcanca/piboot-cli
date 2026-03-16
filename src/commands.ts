@@ -91,7 +91,10 @@ function findSshPubKey(path?: string): string | null {
       return readFileSync(p, "utf-8").trim();
     }
   }
-  return null;
+  log.fail(
+    `No SSH public key found. Generate one with: ssh-keygen -t ed25519\n` +
+    `       Or specify a path: --ssh-key /path/to/key.pub`
+  );
 }
 
 function installSshKey(nfsRoot: string, pubKey: string): void {
