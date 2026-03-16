@@ -22,7 +22,9 @@ const HELP = `
   ssh      SSH into a node (piboot ssh <hostname>)
 
 \x1b[1mGLOBAL OPTIONS\x1b[0m
-  --verbose  Show full stack traces on error
+  --verbose          Show full stack traces on error
+  --ssh-key [path]   Install SSH public key on node, disable password auth
+                     Auto-detects ~/.ssh/id_*.pub if no path given
 
 \x1b[1mEXAMPLES\x1b[0m
   piboot init --serial a1b2c3d4 --mac dc:a6:32:01:02:03 --hostname rpi5-01 --ip 10.10.10.50
@@ -115,7 +117,7 @@ try {
 
     await validateNode(node, config);
     await validateInterfaces(config);
-    await init(config, node);
+    await init(config, node, flags.ssh_key);
     break;
   }
 
@@ -131,7 +133,7 @@ try {
 
     await validateNode(node, config);
 
-    await addNode(config, node);
+    await addNode(config, node, flags.ssh_key);
     break;
   }
 
@@ -139,7 +141,7 @@ try {
     requireRoot();
     const hostname = flags._target ?? flags.hostname;
     if (!hostname) log.fail("Usage: piboot reset <hostname>");
-    await resetNode(loadConfig(), hostname);
+    await resetNode(loadConfig(), hostname, flags.ssh_key);
     break;
   }
 

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync, chownSync, chmodSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, basename } from "node:path";
 import { type Config, type PiNode, saveConfig, tftpDir, nfsDir } from "./config.ts";
@@ -77,7 +77,43 @@ async function ensureIptablesRule(rule: string): Promise<void> {
   await $(`iptables -A ${rule}`);
 }
 
-async function patchNfsRoot(config: Config, node: PiNode): Promise<void> {
+function findSshPubKey(path?: string): string | null {
+  if (path && path !== "true") {
+    if (!existsSync(path)) log.fail(`SSH key not found: ${path}`);
+    return readFileSync(path, "utf-8").trim();
+  }
+  // Auto-detect: try common public key locations
+  const home = process.env.HOME ?? "/root";
+  for (const name of ["id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub"]) {
+    const p = join(home, ".ssh", name);
+    if (existsSync(p)) {
+      log.info(`Using SSH key: ${p}`);
+      return readFileSync(p, "utf-8").trim();
+    }
+  }
+  return null;
+}
+
+function installSshKey(nfsRoot: string, pubKey: string): void {
+  const sshDir = join(nfsRoot, "home/pi/.ssh");
+  mkdirSync(sshDir, { recursive: true });
+  writeFileSync(join(sshDir, "authorized_keys"), pubKey + "\n");
+
+  // Set ownership to pi (uid 1000) — chown works on the NFS root directly
+  chownSync(sshDir, 1000, 1000);
+  chmodSync(sshDir, 0o700);
+  chownSync(join(sshDir, "authorized_keys"), 1000, 1000);
+  chmodSync(join(sshDir, "authorized_keys"), 0o600);
+
+  // Disable password auth in sshd_config
+  const sshdConf = join(nfsRoot, "etc/ssh/sshd_config.d/piboot.conf");
+  mkdirSync(join(nfsRoot, "etc/ssh/sshd_config.d"), { recursive: true });
+  writeFileSync(sshdConf, "PasswordAuthentication no\n");
+
+  log.info("SSH key installed, password auth disabled");
+}
+
+async function patchNfsRoot(config: Config, node: PiNode, sshKey?: string | null): Promise<void> {
   const nfs = nfsDir(config, node.hostname);
   const tftp = tftpDir(config, node.serial);
 
@@ -135,6 +171,11 @@ WantedBy=multi-user.target
   // Enable the service
   mkdirSync(join(nfs, "etc/systemd/system/multi-user.target.wants"), { recursive: true });
   await $try(`ln -sf /etc/systemd/system/piboot-first-update.service "${join(nfs, "etc/systemd/system/multi-user.target.wants/piboot-first-update.service")}"`);
+
+  // SSH key auth
+  if (sshKey) {
+    installSshKey(nfs, sshKey);
+  }
 
   log.info(`Patches applied → ${node.hostname}`);
 }
@@ -199,7 +240,7 @@ async function extractImage(config: Config, targetNfs: string, targetTftp: strin
 
 // ── Commands ────────────────────────────────────────────────────────────────
 
-export async function init(config: Config, firstNode: PiNode): Promise<void> {
+export async function init(config: Config, firstNode: PiNode, sshKeyPath?: string): Promise<void> {
   log.banner("PIBOOT — Netboot Server Init");
 
   // ── 1. Packages ──
@@ -278,7 +319,8 @@ export async function init(config: Config, firstNode: PiNode): Promise<void> {
 
   // ── 8. Patch rootfs ──
   log.step(8, "Patching NFS root");
-  await patchNfsRoot(config, firstNode);
+  const sshKey = sshKeyPath ? findSshPubKey(sshKeyPath) : null;
+  await patchNfsRoot(config, firstNode, sshKey);
 
   // ── 9. NFS exports ──
   log.step(9, "Configuring NFS server");
@@ -314,7 +356,7 @@ export async function init(config: Config, firstNode: PiNode): Promise<void> {
   log.info(`SSH in:      ssh pi@${firstNode.ip}`);
 }
 
-export async function addNode(config: Config, node: PiNode): Promise<void> {
+export async function addNode(config: Config, node: PiNode, sshKeyPath?: string): Promise<void> {
   log.banner(`ADDING NODE: ${node.hostname}`);
 
   const targetTftp = tftpDir(config, node.serial);
@@ -334,7 +376,8 @@ export async function addNode(config: Config, node: PiNode): Promise<void> {
 
   // Patch
   log.step(3, "Patching NFS root");
-  await patchNfsRoot(config, node);
+  const sshKey = sshKeyPath ? findSshPubKey(sshKeyPath) : null;
+  await patchNfsRoot(config, node, sshKey);
 
   // DHCP + NFS — regenerate from config
   log.step(4, "Updating dnsmasq and NFS exports");
@@ -360,7 +403,7 @@ export async function addNode(config: Config, node: PiNode): Promise<void> {
   log.info(`Power it on and SSH: ssh pi@${node.ip}`);
 }
 
-export async function resetNode(config: Config, hostname: string): Promise<void> {
+export async function resetNode(config: Config, hostname: string, sshKeyPath?: string): Promise<void> {
   log.banner(`RESETTING NODE: ${hostname}`);
 
   const node = config.nodes.find((n) => n.hostname === hostname);
@@ -387,7 +430,8 @@ export async function resetNode(config: Config, hostname: string): Promise<void>
 
   // Patch
   log.step(4, "Patching NFS root");
-  await patchNfsRoot(config, node!);
+  const sshKey = sshKeyPath ? findSshPubKey(sshKeyPath) : null;
+  await patchNfsRoot(config, node!, sshKey);
 
   log.banner(`NODE ${hostname} RESET TO FACTORY`);
   log.info(`Power it on.`);
