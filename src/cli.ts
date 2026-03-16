@@ -1,7 +1,7 @@
 #!/usr/bin/env -S deno run --allow-all
 import { loadConfig, type PiNode } from "./config.ts";
 import { log, requireRoot, PibootError } from "./shell.ts";
-import { init, addNode, resetNode, removeNode, listNodes, status, logs, doctor, sshNode } from "./commands.ts";
+import { init, addNode, resetNode, removeNode, listNodes, status, logs, doctor, sshNode, update } from "./commands.ts";
 import { validateNode, validateInterfaces } from "./validate.ts";
 
 const HELP = `
@@ -20,6 +20,7 @@ const HELP = `
   logs     Show dnsmasq logs (--follow for tail -f)
   doctor   Diagnose common server issues
   ssh      SSH into a node (piboot ssh <hostname>)
+  update   Update piboot to the latest version
 
 \x1b[1mGLOBAL OPTIONS\x1b[0m
   --verbose          Show full stack traces on error
@@ -178,6 +179,12 @@ try {
     const hostname = flags._target;
     if (!hostname) log.fail("Usage: piboot ssh <hostname>");
     sshNode(loadConfig(), hostname, extra);
+    break;
+  }
+
+  case "update": {
+    requireRoot();
+    await update();
     break;
   }
 

@@ -702,3 +702,28 @@ export async function doctor(config: Config): Promise<void> {
     log.warn(`${issues} issue${issues > 1 ? "s" : ""} found.`);
   }
 }
+
+const PIBOOT_REPO = "https://github.com/MAkcanca/piboot-cli.git";
+const PIBOOT_DIR = "/opt/piboot";
+
+export async function update(): Promise<void> {
+  log.banner("PIBOOT UPDATE");
+
+  if (existsSync(join(PIBOOT_DIR, ".git"))) {
+    log.info("Pulling latest from GitHub...");
+    await $(`git -C "${PIBOOT_DIR}" pull --ff-only origin main`);
+  } else {
+    log.info("Cloning piboot...");
+    await $(`git clone "${PIBOOT_REPO}" "${PIBOOT_DIR}"`);
+  }
+
+  // Ensure wrapper script exists
+  const wrapper = "/usr/local/bin/piboot";
+  if (!existsSync(wrapper)) {
+    writeFileSync(wrapper, '#!/bin/sh\nexec deno run --allow-all /opt/piboot/src/cli.ts "$@"\n');
+    chmodSync(wrapper, 0o755);
+    log.info("Created wrapper: /usr/local/bin/piboot");
+  }
+
+  log.info("Updated to latest version.");
+}
