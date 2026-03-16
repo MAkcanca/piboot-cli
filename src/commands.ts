@@ -97,10 +97,31 @@ function findSshPubKey(path?: string): string | null {
   );
 }
 
-function installSshKey(nfsRoot: string, pubKey: string): void {
+/** Find the server's SSH public key (for management access to nodes) */
+function findServerKey(): string | null {
+  const home = process.env.HOME ?? "/root";
+  for (const name of ["id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub"]) {
+    const p = join(home, ".ssh", name);
+    if (existsSync(p)) return readFileSync(p, "utf-8").trim();
+  }
+  return null;
+}
+
+function installSshKeys(nfsRoot: string, userKey?: string | null): void {
+  const keys: string[] = [];
+
+  // Always install the server's key for management (reboot, diagnostics)
+  const serverKey = findServerKey();
+  if (serverKey) keys.push(serverKey);
+
+  // Install user-provided key if different from server key
+  if (userKey && userKey !== serverKey) keys.push(userKey);
+
+  if (keys.length === 0) return;
+
   const sshDir = join(nfsRoot, "home/pi/.ssh");
   mkdirSync(sshDir, { recursive: true });
-  writeFileSync(join(sshDir, "authorized_keys"), pubKey + "\n");
+  writeFileSync(join(sshDir, "authorized_keys"), keys.join("\n") + "\n");
 
   // Set ownership to pi (uid 1000) — chown works on the NFS root directly
   chownSync(sshDir, 1000, 1000);
@@ -108,12 +129,12 @@ function installSshKey(nfsRoot: string, pubKey: string): void {
   chownSync(join(sshDir, "authorized_keys"), 1000, 1000);
   chmodSync(join(sshDir, "authorized_keys"), 0o600);
 
-  // Disable password auth in sshd_config
+  // Disable password auth when key auth is available
   const sshdConf = join(nfsRoot, "etc/ssh/sshd_config.d/piboot.conf");
   mkdirSync(join(nfsRoot, "etc/ssh/sshd_config.d"), { recursive: true });
   writeFileSync(sshdConf, "PasswordAuthentication no\n");
 
-  log.info("SSH key installed, password auth disabled");
+  log.info(`SSH key auth configured (${keys.length} key${keys.length > 1 ? "s" : ""}), password auth disabled`);
 }
 
 async function patchNfsRoot(config: Config, node: PiNode, sshKey?: string | null): Promise<void> {
@@ -181,10 +202,12 @@ WantedBy=multi-user.target
   mkdirSync(join(nfs, "etc/systemd/system/multi-user.target.wants"), { recursive: true });
   await $try(`ln -sf /etc/systemd/system/piboot-first-update.service "${join(nfs, "etc/systemd/system/multi-user.target.wants/piboot-first-update.service")}"`);
 
-  // SSH key auth
-  if (sshKey) {
-    installSshKey(nfs, sshKey);
-  }
+  // SSH key auth — always install server key for management, plus user key if provided
+  installSshKeys(nfs, sshKey);
+
+  // Passwordless sudo for pi user (needed for remote reboot)
+  writeFileSync(join(nfs, "etc/sudoers.d/010_pi-nopasswd"), "pi ALL=(ALL) NOPASSWD: ALL\n");
+  chmodSync(join(nfs, "etc/sudoers.d/010_pi-nopasswd"), 0o440);
 
   log.info(`Patches applied → ${node.hostname}`);
 }
@@ -456,13 +479,20 @@ export async function resetNode(config: Config, hostname: string, sshKeyPath?: s
   }
 
   // Reboot the Pi before wiping — it's NFS-booting so cmdline.txt has
-  // rootwait, meaning the kernel will retry the NFS mount until we finish
+  // rootwait, meaning the kernel will retry the NFS mount until we finish.
+  // Test connectivity first, then send reboot (reboot itself drops the connection).
   log.step(1, "Rebooting node");
-  const rebootResult = await $try(
-    `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes pi@${node!.ip} "sudo reboot" 2>/dev/null`
+  const sshAlive = await $try(
+    `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes pi@${node!.ip} "echo OK" 2>/dev/null`
   );
-  if (rebootResult !== "") {
+  let rebooted = false;
+  if (sshAlive.trim() === "OK") {
+    await $try(
+      `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes pi@${node!.ip} "sudo reboot" 2>/dev/null`
+    );
+    rebooted = true;
     log.info(`Reboot signal sent to ${node!.ip} — Pi will boot into fresh rootfs automatically`);
+    await sleep(3000); // give the Pi a moment to start shutting down
   } else {
     log.warn(`Could not SSH into ${node!.ip} — you may need to power cycle after reset`);
   }
@@ -484,7 +514,7 @@ export async function resetNode(config: Config, hostname: string, sshKeyPath?: s
   await patchNfsRoot(config, node!, sshKey);
 
   log.banner(`NODE ${hostname} RESET TO FACTORY`);
-  if (rebootResult !== "") {
+  if (rebooted) {
     log.info("Pi is rebooting — it will come up with the fresh rootfs automatically.");
   } else {
     log.info("Power cycle the Pi to boot into the fresh rootfs.");
