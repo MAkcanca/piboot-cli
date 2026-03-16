@@ -8,14 +8,20 @@ const DIM = "\x1b[2m";
 const BOLD = "\x1b[1m";
 const NC = "\x1b[0m";
 
+export class PibootError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PibootError";
+  }
+}
+
 export const log = {
   info: (...args: unknown[]) =>
     console.log(`${GRN}[INFO]${NC} `, ...args),
   warn: (...args: unknown[]) =>
     console.log(`${YEL}[WARN]${NC} `, ...args),
-  fail: (...args: unknown[]) => {
-    console.error(`${RED}[FAIL]${NC} `, ...args);
-    process.exit(1);
+  fail: (...args: unknown[]): never => {
+    throw new PibootError(args.map(String).join(" "));
   },
   step: (n: number, label: string) =>
     console.log(`\n${CYN}[${n}]${NC} ${BOLD}${label}${NC}`),
@@ -87,4 +93,13 @@ export function requireRoot(): void {
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function withContext<T>(description: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new PibootError(`${description}: ${msg}`);
+  }
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env -S deno run --allow-all
 import { loadConfig, type PiNode } from "./config";
-import { log, requireRoot } from "./shell";
+import { log, requireRoot, PibootError } from "./shell";
 import { init, addNode, resetNode, removeNode, listNodes, status, logs } from "./commands";
 
 const HELP = `
@@ -17,6 +17,11 @@ const HELP = `
   list     List all configured nodes
   status   Show server and service status
   logs     Show dnsmasq logs (--follow for tail -f)
+  doctor   Diagnose common server issues
+  ssh      SSH into a node (piboot ssh <hostname>)
+
+\x1b[1mGLOBAL OPTIONS\x1b[0m
+  --verbose  Show full stack traces on error
 
 \x1b[1mEXAMPLES\x1b[0m
   piboot init --serial a1b2c3d4 --mac dc:a6:32:01:02:03 --hostname rpi5-01 --ip 10.10.10.50
@@ -70,8 +75,11 @@ if (!command || command === "help" || command === "--help" || command === "-h") 
 }
 
 const flags = parseFlags(rest);
+const verbose = flags.verbose === "true";
+delete flags.verbose;
 
-switch (command) {
+try {
+  switch (command) {
   case "init": {
     requireRoot();
     const config = loadConfig();
@@ -149,4 +157,13 @@ switch (command) {
 
   default:
     log.fail(`Unknown command: ${command}\nRun 'piboot help' for usage.`);
+  }
+} catch (err) {
+  if (err instanceof PibootError) {
+    console.error(`\x1b[0;31m[FAIL]\x1b[0m  ${err.message}`);
+    if (verbose) console.error(err.stack);
+    process.exit(1);
+  }
+  console.error(`\x1b[0;31m[FAIL]\x1b[0m  Unexpected error:`, err);
+  process.exit(2);
 }
