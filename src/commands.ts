@@ -252,6 +252,9 @@ async function extractImage(config: Config, targetNfs: string, targetTftp: strin
 export async function init(config: Config, firstNode: PiNode, sshKeyPath?: string): Promise<void> {
   log.banner("PIBOOT — Netboot Server Init");
 
+  // Validate SSH key upfront — fail fast before any heavy work
+  const sshKey = sshKeyPath ? findSshPubKey(sshKeyPath) : null;
+
   // ── 1. Packages ──
   log.step(1, "Installing packages");
   await $(`apt-get update -qq`);
@@ -329,7 +332,6 @@ export async function init(config: Config, firstNode: PiNode, sshKeyPath?: strin
 
   // ── 8. Patch rootfs ──
   log.step(8, "Patching NFS root");
-  const sshKey = sshKeyPath ? findSshPubKey(sshKeyPath) : null;
   await patchNfsRoot(config, firstNode, sshKey);
 
   // ── 9. NFS exports ──
@@ -369,6 +371,9 @@ export async function init(config: Config, firstNode: PiNode, sshKeyPath?: strin
 export async function addNode(config: Config, node: PiNode, sshKeyPath?: string): Promise<void> {
   log.banner(`ADDING NODE: ${node.hostname}`);
 
+  // Validate SSH key upfront — fail fast before image extraction
+  const sshKey = sshKeyPath ? findSshPubKey(sshKeyPath) : null;
+
   const targetTftp = tftpDir(config, node.serial);
   const targetNfs = nfsDir(config, node.hostname);
 
@@ -386,7 +391,6 @@ export async function addNode(config: Config, node: PiNode, sshKeyPath?: string)
 
   // Patch
   log.step(3, "Patching NFS root");
-  const sshKey = sshKeyPath ? findSshPubKey(sshKeyPath) : null;
   await patchNfsRoot(config, node, sshKey);
 
   // DHCP + NFS — regenerate from config
@@ -416,6 +420,9 @@ export async function addNode(config: Config, node: PiNode, sshKeyPath?: string)
 export async function resetNode(config: Config, hostname: string, sshKeyPath?: string): Promise<void> {
   log.banner(`RESETTING NODE: ${hostname}`);
 
+  // Validate SSH key upfront — fail fast before wiping rootfs
+  const sshKey = sshKeyPath ? findSshPubKey(sshKeyPath) : null;
+
   const node = config.nodes.find((n) => n.hostname === hostname);
   if (!node) log.fail(`Node "${hostname}" not found in config. Run 'piboot list' to see nodes.`);
 
@@ -440,7 +447,6 @@ export async function resetNode(config: Config, hostname: string, sshKeyPath?: s
 
   // Patch
   log.step(4, "Patching NFS root");
-  const sshKey = sshKeyPath ? findSshPubKey(sshKeyPath) : null;
   await patchNfsRoot(config, node!, sshKey);
 
   log.banner(`NODE ${hostname} RESET TO FACTORY`);
