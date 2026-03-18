@@ -6,7 +6,7 @@ Raspberry Pi netboot cluster manager. Sets up a Debian server as a PXE/TFTP/NFS 
 
 ```
 ┌─────────────────────────────┐
-│  Proxmox (Intel N100)       │
+│  Proxmox                    │
 │  ┌───────────────────────┐  │
 │  │  Debian 13 VM         │  │
 │  │  ┌─────┐   ┌───────┐ │  │
